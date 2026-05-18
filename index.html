@@ -17,8 +17,9 @@ tailwind.config = {
   }
 }
 </script>
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
   .card{background:#fff;border-radius:16px;border:1px solid #f0f0f0;padding:20px;transition:all 0.2s}
   .card:hover{box-shadow:0 4px 20px rgba(0,0,0,0.06)}
@@ -31,6 +32,7 @@ tailwind.config = {
   .btn-sm{padding:6px 12px;font-size:12px}
   .input{width:100%;padding:12px 16px;border-radius:12px;border:1px solid #e5e5e5;background:#f9fafb;font-size:14px;outline:none;transition:border-color 0.2s;box-sizing:border-box}
   .input:focus{border-color:#165DFF;box-shadow:0 0 0 3px rgba(22,93,255,0.1)}
+  select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'%3E%3C/path%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 16px center;padding-right:40px}
   .tag{display:inline-flex;align-items:center;padding:3px 10px;border-radius:8px;font-size:12px;font-weight:500}
   .tag-pri{background:#E8F0FF;color:#165DFF}.tag-ok{background:#e6f9f1;color:#2ea87a}.tag-warn{background:#fff4ed;color:#e0691a}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120px);z-index:9999;background:#1a1a1a;color:#fff;padding:12px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(0,0,0,0.2);transition:transform 0.3s cubic-bezier(0.175,0.885,0.32,1.275)}
@@ -51,6 +53,11 @@ tailwind.config = {
   .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}.dot-on{background:#165DFF}.dot-off{background:#ddd}
   .result-box{border-radius:12px;padding:16px}
   .result-ok{background:#f0fdf6;border:1px solid #bbf7d0}.result-err{background:#fef2f2;border:1px solid #fecaca}
+  /* PDF export loading */
+  .pdf-loading-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px}
+  .pdf-loading-overlay .spinner{width:48px;height:48px;border:4px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite}
+  .pdf-loading-overlay .text{color:#fff;font-size:15px;font-weight:500}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -114,13 +121,11 @@ tailwind.config = {
 
   <!-- Question Area -->
   <section id="questionArea" style="display:none">
-    <!-- Loading -->
     <div id="loadingCard" class="card" style="display:none;text-align:center;padding:40px">
       <div style="width:40px;height:40px;border:3px solid #E8F0FF;border-top-color:#165DFF;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px"></div>
-      <p style="color:#999;font-size:14px">AI 正在生成题目...</p>
-      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+      <p style="color:#999;font-size:14px" id="loadingMsg">正在生成高质量题目，请稍候...</p>
+      <p style="color:#bbb;font-size:12px;margin-top:4px" id="loadingSub">从Supabase检索参考题 · 去重检查 · 质量验证</p>
     </div>
-    <!-- Batch Progress -->
     <div id="batchProgress" class="card" style="display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <span style="font-size:14px;font-weight:500">批次进度</span>
@@ -131,7 +136,6 @@ tailwind.config = {
       </div>
       <div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap" id="batchDots"></div>
     </div>
-    <!-- Question Card -->
     <div id="questionCard" class="card fade-in" style="display:none">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
         <span class="tag tag-pri" id="qGrade"></span>
@@ -158,7 +162,8 @@ tailwind.config = {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <h3 style="font-size:18px;font-weight:700;margin:0">📝 错题本 <span style="font-size:12px;color:#999;font-weight:400" id="errCount"></span></h3>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-warn btn-sm" onclick="exportErrors()">导出TXT</button>
+        <button class="btn btn-warn btn-sm" onclick="exportPDF()">📄 导出PDF</button>
+        <button class="btn btn-out btn-sm" onclick="exportErrors()">导出TXT</button>
         <button class="btn btn-err btn-sm" onclick="clearErrors()">清空</button>
       </div>
     </div>
@@ -169,7 +174,7 @@ tailwind.config = {
 
 <!-- Settings Modal -->
 <div id="settingsOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:50;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeSettings()">
-  <div class="slide-up" style="background:#fff;border-radius:16px;padding:24px;max-width:460px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,0.12)">
+  <div class="slide-up" style="background:#fff;border-radius:16px;padding:24px;max-width:500px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,0.12)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <h3 style="font-size:18px;font-weight:700;margin:0">⚙️ 设置</h3>
       <button onclick="closeSettings()" class="btn btn-ghost" style="font-size:18px;padding:4px 8px">✕</button>
@@ -177,22 +182,27 @@ tailwind.config = {
     <div style="display:flex;flex-direction:column;gap:14px">
       <div>
         <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">AI 提供商</label>
-        <select id="setProvider" class="input" onchange="updateProviderUI()">
-          <option value="openai">OpenAI / ChatGPT</option>
-          <option value="claude">Anthropic Claude</option>
+        <select id="setProvider" class="input" onchange="onProviderChange()">
+          <option value="deepseek">🔵 DeepSeek（默认）</option>
+          <option value="openai">🟢 OpenAI</option>
+          <option value="claude">🟣 Anthropic Claude</option>
+          <option value="qwen">🟠 通义千问（阿里）</option>
+          <option value="ernie">🔴 文心一言（百度）</option>
+          <option value="doubao">🟡 豆包（字节）</option>
         </select>
       </div>
       <div>
-        <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">API Key</label>
-        <input type="password" id="setApiKey" class="input" placeholder="sk-... 或 sk-ant-...">
-      </div>
-      <div id="setOpenAIOnly">
-        <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">API Base URL（可选）</label>
-        <input type="text" id="setBaseUrl" class="input" placeholder="https://api.openai.com/v1">
+        <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">模型</label>
+        <select id="setModel" class="input"></select>
       </div>
       <div>
-        <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">模型</label>
-        <input type="text" id="setModel" class="input" placeholder="gpt-4o / claude-sonnet-4-6">
+        <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">API Key</label>
+        <input type="password" id="setApiKey" class="input" placeholder="输入对应厂商的 API Key...">
+        <div style="font-size:11px;color:#999;margin-top:4px" id="apiKeyHint"></div>
+      </div>
+      <div id="setBaseUrlGroup">
+        <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">API Base URL</label>
+        <input type="text" id="setBaseUrl" class="input" placeholder="自动填充默认地址">
       </div>
       <div>
         <label style="font-size:13px;font-weight:500;color:#555;display:block;margin-bottom:4px">Supabase 表名</label>
@@ -211,6 +221,16 @@ tailwind.config = {
 </div>
 
 <script>
+// ==================== PROVIDER CONFIG ====================
+const PROVIDERS={
+  deepseek:{name:'DeepSeek',models:['deepseek-chat','deepseek-coder'],baseURL:'https://api.deepseek.com/v1',keyHint:'sk-... 从 platform.deepseek.com 获取',apiType:'openai'},
+  openai:{name:'OpenAI',models:['gpt-4o','gpt-4o-mini','gpt-3.5-turbo'],baseURL:'https://api.openai.com/v1',keyHint:'sk-... 从 platform.openai.com 获取',apiType:'openai'},
+  claude:{name:'Anthropic Claude',models:['claude-sonnet-4-6','claude-3-sonnet-20240229','claude-3-haiku-20240307'],baseURL:'https://api.anthropic.com',keyHint:'sk-ant-... 从 console.anthropic.com 获取',apiType:'claude'},
+  qwen:{name:'通义千问',models:['qwen-turbo','qwen-plus','qwen-max'],baseURL:'https://dashscope.aliyuncs.com/compatible-mode/v1',keyHint:'sk-... 从 dashscope.aliyuncs.com 获取',apiType:'openai'},
+  ernie:{name:'文心一言',models:['ernie-3.5-8k','ernie-4.0-8k'],baseURL:'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat',keyHint:'从 console.bce.baidu.com 获取 Access Token',apiType:'ernie'},
+  doubao:{name:'豆包',models:['doubao-pro-32k','doubao-lite-32k'],baseURL:'https://ark.cn-beijing.volces.com/api/v3',keyHint:'从 console.volcengine.com 获取',apiType:'openai'}
+};
+
 // ==================== SUPABASE ====================
 const SB_URL='https://cepwefeymzfremccqenh.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNlcHdlZmV5bXpmcmVtY2NxZW5oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMzg3OTcsImV4cCI6MjA5NDYxNDc5N30.PhI9k0vPLOROQiH1ViD-fPyPGdCNInPJJPUxXLhAI6k';
@@ -224,6 +244,7 @@ let batchQuestions=[],speedMode=true,batchSize=3;
 let selectedOpt=null,userFill='',fillIsCorrect=false;
 let dedupHistory={},consecDupCount=0,tplUsed={};
 let darkMode=false;
+let totalDedupCount=0; // 本地去重总计数
 
 // ==================== GRADE CONFIG ====================
 const GRADES={
@@ -278,9 +299,23 @@ function getChName(cid){const ch=TREE.find(c=>c.id===cid);return ch?ch.name:''}
 function getPtName(pid){const p=findPt(pid);return p?p.name:''}
 function getSettings(){try{return JSON.parse(localStorage.getItem('bjm_settings')||'{}')}catch(e){return{}}}
 
-// ==================== DEDUP ====================
+// ==================== DEDUP (30-day window, auto-clean at 1000) ====================
 function getDedup(){try{return JSON.parse(localStorage.getItem('bjm_dedup')||'{}')}catch(e){return{}}}
-function saveDedup(){localStorage.setItem('bjm_dedup',JSON.stringify(dedupHistory))}
+function saveDedup(){
+  // Auto-clean: if total records > 1000, remove oldest
+  let total=0;for(const k in dedupHistory)total+=dedupHistory[k].length;
+  if(total>1000){
+    let all=[];for(const k in dedupHistory)for(const e of dedupHistory[k])all.push({k:k,e:e});
+    all.sort((a,b)=>a.e.date-b.e.date);
+    const toRemove=all.slice(0,total-1000);
+    for(const r of toRemove){
+      dedupHistory[r.k]=dedupHistory[r.k].filter(e=>e.hash!==r.e.hash);
+      if(dedupHistory[r.k].length===0)delete dedupHistory[r.k];
+    }
+  }
+  totalDedupCount=total>1000?1000:total;
+  localStorage.setItem('bjm_dedup',JSON.stringify(dedupHistory));
+}
 function qHash(pid,txt,qt){
   if(!txt)return'';let s=txt||'';
   let fm=(s.match(/\$[^\$]+\$/g)||[]).join('');
@@ -295,22 +330,38 @@ function qFingerprint(txt){
 function isDup(pid,txt,qt){
   if(!pid||!txt)return false;const h=getDedup();const list=h[pid]||[];
   const hs=qHash(pid,txt,qt);if(!hs)return false;
-  const cutoff=Date.now()-90*24*3600*1000;
+  const cutoff=Date.now()-30*24*3600*1000; // 30天窗口
   for(const e of list){if(e.date<cutoff)continue;if(e.hash===hs)return true}
   const fp=qFingerprint(txt);
   for(const e of list){if(e.date<cutoff||!e.fp)continue;const d=levDist(fp,e.fp);const mx=Math.max(fp.length,e.fp.length);if(mx>0&&(1-d/mx)>0.90)return true}
   return false;
 }
+function isDupInBatch(pid,txt,qt,existingBatch){
+  // Check if duplicate within same batch (same知识+same题型)
+  if(!existingBatch||!txt)return false;
+  for(const q of existingBatch){
+    if(!q||!q.question)continue;
+    if(q._genType===qt||q.type===qt){
+      const d=levDist(qFingerprint(txt),qFingerprint(q.question));
+      const mx=Math.max(txt.length,q.question.length);
+      if(mx>0&&(1-d/mx)>0.85)return true;
+    }
+  }
+  return false;
+}
 function addDedup(pid,txt,qt){
   if(!pid||!txt)return;const h=getDedup();if(!h[pid])h[pid]=[];
   const hs=qHash(pid,txt,qt);const fp=qFingerprint(txt);if(!hs)return;
+  // Don't add if exact hash already exists in 30 days
+  const cutoff=Date.now()-30*24*3600*1000;
+  if(h[pid].some(e=>e.hash===hs&&e.date>cutoff))return;
   h[pid].push({hash:hs,fp:fp,date:Date.now()});
-  if(h[pid].length>300)h[pid]=h[pid].slice(-300);
-  const cutoff=Date.now()-120*24*3600*1000;h[pid]=h[pid].filter(e=>e.date>cutoff);
+  if(h[pid].length>200)h[pid]=h[pid].slice(-200);
+  h[pid]=h[pid].filter(e=>e.date>cutoff);if(h[pid].length===0)delete h[pid];
   dedupHistory=h;saveDedup();
 }
 function clearDedup(){
-  if(confirm('确定清空去重历史？')){localStorage.removeItem('bjm_dedup');dedupHistory={};consecDupCount=0;toast('去重历史已清空')}
+  if(confirm('确定清空去重历史？')){localStorage.removeItem('bjm_dedup');dedupHistory={};consecDupCount=0;totalDedupCount=0;toast('去重历史已清空')}
 }
 function levDist(a,b){
   if(!a||!b)return 0;const m=a.length,n=b.length;
@@ -321,90 +372,253 @@ function levDist(a,b){
 }
 
 // ==================== SETTINGS UI ====================
+function onProviderChange(){
+  const p=$('setProvider').value;
+  const cfg=PROVIDERS[p];
+  // Update model dropdown
+  const m=$('setModel');
+  m.innerHTML=cfg.models.map(m=>`<option value="${m}">${m}</option>`).join('');
+  // Update base URL
+  $('setBaseUrl').value=cfg.baseURL;
+  $('setBaseUrl').placeholder=cfg.baseURL;
+  // Update key hint
+  $('apiKeyHint').textContent=cfg.keyHint||'';
+  // Show/hide base URL for ernie (different auth)
+  $('setBaseUrlGroup').style.display=(p==='ernie')?'none':'';
+}
 function showSettings(){
   const s=getSettings();
-  $('setProvider').value=s.provider||'openai';
+  const p=s.provider||'deepseek';
+  $('setProvider').value=p;
   $('setApiKey').value=s.apiKey||'';
-  $('setBaseUrl').value=s.baseUrl||'';
-  $('setModel').value=s.model||(s.provider==='claude'?'claude-sonnet-4-6':'gpt-4o');
   $('setBatch').value=s.batchSize||3;
   $('setTable').value=s.table||'beijing math';
-  updateProviderUI();
+  onProviderChange();
+  if(s.model)$('setModel').value=s.model;
+  if(s.baseUrl&&s.provider===p)$('setBaseUrl').value=s.baseUrl;
   $('settingsOverlay').style.display='flex';
 }
 function closeSettings(){$('settingsOverlay').style.display='none'}
-function updateProviderUI(){
-  const p=$('setProvider').value;
-  $('setOpenAIOnly').style.display=p==='openai'?'':'none';
-  if(!$('setModel').value||$('setModel').value==='gpt-4o'||$('setModel').value==='claude-sonnet-4-6')
-    $('setModel').value=p==='claude'?'claude-sonnet-4-6':'gpt-4o';
-}
 function saveSettings(){
-  const s={provider:$('setProvider').value,apiKey:$('setApiKey').value,baseUrl:$('setBaseUrl').value,model:$('setModel').value,batchSize:parseInt($('setBatch').value)||3,table:$('setTable').value};
-  localStorage.setItem('bjm_settings',JSON.stringify(s));batchSize=s.batchSize;closeSettings();toast('设置已保存 ✓');
+  const p=$('setProvider').value;
+  const cfg=PROVIDERS[p];
+  const s={
+    provider:p,
+    apiKey:$('setApiKey').value.trim(),
+    baseUrl:$('setBaseUrl').value.trim()||cfg.baseURL,
+    model:$('setModel').value,
+    batchSize:parseInt($('setBatch').value)||3,
+    table:$('setTable').value||'beijing math'
+  };
+  localStorage.setItem('bjm_settings',JSON.stringify(s));
+  // Also save per-provider key
+  if(s.apiKey)localStorage.setItem('bjm_apikey_'+p,s.apiKey);
+  else s.apiKey=localStorage.getItem('bjm_apikey_'+p)||'';
+  // Ensure key is stored
+  if(!s.apiKey)localStorage.setItem('bjm_apikey_'+p,'');
+  localStorage.setItem('bjm_settings',JSON.stringify(s));
+  batchSize=s.batchSize;
+  closeSettings();
+  toast('设置已保存 ✓');
 }
 
-// ==================== API CALL ====================
-async function callAI(sys,usr){
-  const s=getSettings();if(!s.apiKey){toast('请先配置 API Key');return null}
-  const p=s.provider||'openai';
-  if(p==='claude'){
-    const bu=s.baseUrl||'https://api.anthropic.com';
-    const r=await fetch(bu+'/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':s.apiKey,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:s.model||'claude-sonnet-4-6',max_tokens:4096,system:sys,messages:[{role:'user',content:usr}]})});
-    if(!r.ok)throw new Error(`Claude: ${r.status}`);
-    const d=await r.json();return d.content[0].text;
-  }else{
-    const bu=s.baseUrl||'https://api.openai.com/v1';
-    const r=await fetch(bu+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${s.apiKey}`},body:JSON.stringify({model:s.model||'gpt-4o',messages:[{role:'system',content:sys},{role:'user',content:usr}],temperature:0.8,max_tokens:4096})});
-    if(!r.ok)throw new Error(`OpenAI: ${r.status}`);
-    const d=await r.json();return d.choices[0].message.content;
+// ==================== API CALL (multi-provider) ====================
+async function callAI(sys,usr,timeoutMs=60000){
+  const s=getSettings();
+  const p=s.provider||'deepseek';
+  const cfg=PROVIDERS[p];
+  // Try per-provider key first, then settings key
+  let apiKey=s.apiKey||localStorage.getItem('bjm_apikey_'+p)||'';
+  if(!apiKey){toast('请先在设置中配置 '+cfg.name+' 的 API Key');return null}
+  const model=s.model||cfg.models[0];
+  const baseUrl=s.baseUrl||cfg.baseURL;
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),timeoutMs);
+
+  try{
+    if(cfg.apiType==='claude'){
+      const r=await fetch(baseUrl+'/v1/messages',{
+        method:'POST',signal:controller.signal,
+        headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01'},
+        body:JSON.stringify({model:model,max_tokens:4096,system:sys,messages:[{role:'user',content:usr}]})
+      });
+      clearTimeout(timeout);
+      if(!r.ok){const e=await r.text();throw new Error(`Claude ${r.status}: ${e.substring(0,200)}`)}
+      const d=await r.json();return d.content[0].text;
+    }else if(cfg.apiType==='ernie'){
+      // 文心一言 uses different auth: access_token as query param
+      const r=await fetch(baseUrl+'/completions?access_token='+encodeURIComponent(apiKey),{
+        method:'POST',signal:controller.signal,
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:model,messages:[{role:'system',content:sys},{role:'user',content:usr}],temperature:0.8,max_output_tokens:4096})
+      });
+      clearTimeout(timeout);
+      if(!r.ok){const e=await r.text();throw new Error(`ERNIE ${r.status}: ${e.substring(0,200)}`)}
+      const d=await r.json();
+      // Handle ERNIE response format
+      if(d.result)return d.result;
+      if(d.choices&&d.choices[0])return d.choices[0].message.content;
+      throw new Error('ERNIE: unexpected response format');
+    }else{
+      // OpenAI-compatible: deepseek, openai, qwen, doubao
+      let url=baseUrl+'/chat/completions';
+      // Doubao uses /chat/completions under api/v3
+      const r=await fetch(url,{
+        method:'POST',signal:controller.signal,
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+        body:JSON.stringify({model:model,messages:[{role:'system',content:sys},{role:'user',content:usr}],temperature:0.8,max_tokens:4096})
+      });
+      clearTimeout(timeout);
+      if(!r.ok){const e=await r.text();throw new Error(`${cfg.name} ${r.status}: ${e.substring(0,200)}`)}
+      const d=await r.json();
+      if(!d.choices||!d.choices[0])throw new Error(cfg.name+': 响应格式异常');
+      return d.choices[0].message.content;
+    }
+  }catch(e){
+    clearTimeout(timeout);
+    if(e.name==='AbortError')throw new Error('请求超时（60秒），请尝试更换模型');
+    throw e;
   }
+}
+
+// ==================== SUPABASE RAG ====================
+async function fetchRefQuestions(pid,grade,diff){
+  if(!sb)return[];
+  try{
+    const pt=findPt(pid);const pn=pt?pt.name:pid;const tbl=$('setTable').value||'beijing math';
+    // Use random offset for variety, fetch 10+ reference questions
+    const offset=Math.floor(Math.random()*50);
+    // Try multiple queries with different ordering for diversity
+    const queries=[
+      sb.from(tbl).select('*').like('考点','%'+pn.substring(0,4)+'%').limit(5),
+      sb.from(tbl).select('*').order('id',{ascending:false}).limit(5),
+    ];
+    const results=await Promise.allSettled(queries);
+    let refs=[];
+    for(const r of results){
+      if(r.status==='fulfilled'&&r.value.data){
+        for(const row of r.value.data){
+          const qText=row['题干']||row['stem']||'';
+          if(qText&&qText.length>20&&!refs.some(x=>x.question===qText)){
+            refs.push({
+              question:qText.substring(0,300),
+              answer:row['答案']||row['answer']||'',
+              type:row['题型']||row['type']||'',
+              pointName:row['考点']||row['pointName']||''
+            });
+          }
+        }
+      }
+    }
+    // Shuffle for randomness
+    refs.sort(()=>Math.random()-0.5);
+    return refs.slice(0,12);
+  }catch(e){console.warn('RAG fetch failed:',e);return[]}
 }
 
 // ==================== QUESTION GENERATION ====================
 function buildSys(){
   return `你是2026年北京高考数学命题专家。严格按北京卷最新风格命题。
 
-2026北京卷特点：选择题10道（4分/题），填空题5道（5分/题），解答题6道。注重核心素养：数学抽象、逻辑推理、数学建模、直观想象、数学运算、数据分析。强调情境化命题（真实/科学/数学情境）。解答题常有"阅读理解+探究发现"型。压轴题考导数综合/解析几何探究/数列创新。
+2026北京卷特点：选择题10道（4分/题），填空题5道（5分/题），解答题6道。注重核心素养：数学抽象、逻辑推理、数学建模、直观想象、数学运算、数据分析。强调情境化命题。解答题常含探究发现型。压轴题考导数综合/解析几何探究/数列创新。
 
-输出严格JSON（不要markdown包裹）：
-{"question":"完整题干（LaTeX公式用$...$）","type":"单选/多选/填空/解答题","options":["A．...","B．..."...]或null,"answer":"正确答案","explanation":"详细解题过程","difficulty":"易/中/难","pointName":"最细考点名称"}`;
+命题铁律：不可超纲、不可偏题怪题、必须符合北京高考命题规范。
+
+输出前请自我验证：1)答案是否正确 2)解析是否完整 3)难度是否匹配。
+
+输出严格JSON（无markdown包裹）：
+{"question":"完整题干（LaTeX用$...$）","type":"单选/多选/填空/解答题","options":["A．...","B．..."...]或null,"answer":"正确答案","explanation":"详细解题过程（含步骤推导）","difficulty":"易/中/难","pointName":"最细考点名称","selfCheck":"已通过自我验证"}`;
 }
 
-function buildUsr(pid,grade,diff){
+function buildUsr(pid,grade,diff,refs){
   const pt=findPt(pid);const pn=pt?pt.name:pid;
   const ch=pt?(TREE.find(c=>c.pts.includes(pt))||{}).name||'':'';
-  const ex=getDedup()[pid]||[];const rh=ex.slice(-5).map(e=>e.hash).join(';');
+  // Get recent hashes for dedup mention
+  const ex=getDedup()[pid]||[];
+  const rh=ex.slice(-10).map(e=>e.hash).join(';');
+  // Format reference questions
+  let refText='';
+  if(refs&&refs.length>0){
+    const sampled=refs.sort(()=>Math.random()-0.5).slice(0,8);
+    refText='\n参考题目（仅用于了解风格，禁止重复）：\n'+sampled.map((r,i)=>`[${i+1}] 题型:${r.type||'?'} | ${r.question.substring(0,150)}...`).join('\n');
+  }
+  const types=['单选','单选','填空','解答题','单选','填空','解答题','单选','单选','解答题'];
+  const assignedType=types[Math.floor(Math.random()*types.length)];
+
   return `请生成一道北京${grade}数学题。
-考点：${pn} | 章节：${ch} | 难度：${diff}
-已存在题目哈希（避免重复）：${rh||'无'}
-题型根据考点自动选择。题目完全原创。LaTeX用$...$。选择题按A/B/C/D。解答题可含(1)(2)(3)小问。`;
+考点：${pn} | 章节：${ch} | 难度：${diff} | 建议题型：${assignedType}
+已存在题目哈希（30天内，请完全避开）：${rh||'无'}
+${refText}
+要求：题目完全原创，不与参考题重复。LaTeX用$...$。解答题可含(1)(2)小问。请自我验证答案正确性后输出。`;
 }
 
-async function genOne(pid,grade,diff,rt=0){
+async function genOne(pid,grade,diff,rt=0,existingBatch=[]){
   const pt=findPt(pid);if(!pt)return null;
   try{
-    const raw=await callAI(buildSys(),buildUsr(pid,grade,diff));if(!raw)return null;
-    let parsed=extractJSON(raw);if(!parsed){if(rt<2)return genOne(pid,grade,diff,rt+1);return null}
+    // RAG: fetch reference questions
+    let refs=[];
+    if(sb&&rt===0)refs=await fetchRefQuestions(pid,grade,diff);
+
+    const raw=await callAI(buildSys(),buildUsr(pid,grade,diff,refs),60000);
+    if(!raw){if(rt<2)return genOne(pid,grade,diff,rt+1,existingBatch);return null}
+
+    let parsed=extractJSON(raw);
+    if(!parsed){if(rt<2)return genOne(pid,grade,diff,rt+1,existingBatch);return null}
+
     const qt=parsed.type||'填空';const tx=parsed.question||'';
-    if(isDup(pid,tx,qt)){consecDupCount++;if(rt<2)return genOne(pid,grade,diff,rt+1);if(consecDupCount>=3)consecDupCount=0}else{consecDupCount=0}
-    if(sb&&tx){const ddb=await checkSBDup(pid,tx);if(ddb&&rt<2)return genOne(pid,grade,diff,rt+1)}
+
+    // Quality check: selfCheck field
+    if(!parsed.selfCheck&&rt<1){
+      // Retry if no self-verification
+      return genOne(pid,grade,diff,rt+1,existingBatch);
+    }
+
+    // Dedup check (30-day window)
+    if(isDup(pid,tx,qt)){
+      consecDupCount++;
+      if(rt<2)return genOne(pid,grade,diff,rt+1,existingBatch);
+      if(consecDupCount>=3){consecDupCount=0;toast('连续重复，已重置计数器，请重试')}
+      return null;
+    }
+
+    // Dedup within batch (same知识+same题型)
+    if(isDupInBatch(pid,tx,qt,existingBatch)){
+      if(rt<2)return genOne(pid,grade,diff,rt+1,existingBatch);
+      return null;
+    }
+
+    consecDupCount=0;
     addDedup(pid,tx,qt);
-    return {question:tx,type:qt,options:parsed.options||null,answer:parsed.answer||'',explanation:parsed.explanation||'',difficulty:parsed.difficulty||diff,pointName:parsed.pointName||pn,_genType:qt};
-  }catch(e){console.error(e);if(rt<1)return genOne(pid,grade,diff,rt+1);return null}
+
+    return {
+      question:tx,type:qt,options:parsed.options||null,
+      answer:parsed.answer||'',explanation:parsed.explanation||'',
+      difficulty:parsed.difficulty||diff,pointName:parsed.pointName||pn,
+      _genType:qt,selfCheck:parsed.selfCheck||true
+    };
+  }catch(e){
+    console.error('Generate error:',e.message);
+    if(rt<2){
+      toast(`生成失败（${e.message.substring(0,50)}），正在重试...`);
+      return genOne(pid,grade,diff,rt+1,existingBatch);
+    }
+    toast('题目生成多次失败，建议：1) 更换AI模型 2) 检查API Key 3) 切换知识点');
+    return null;
+  }
 }
 
 async function genBatch(pid,count,grade,diff){
-  const qs=[];for(let i=0;i<count;i++){updBatch(i,count,'loading');const q=await genOne(pid,grade,diff);if(q){q._idx=i;q._status='ready';qs.push(q);updBatch(i+1,count,'done')}else{updBatch(i,count,'failed')}}return qs;
-}
-
-async function checkSBDup(pid,txt){
-  if(!sb)return false;try{
-    const fp=qFingerprint(txt).substring(0,30);
-    const tbl=$('setTable').value||'beijing math';
-    const r=await sb.from(tbl).select('id').limit(1);
-    return false; // For now, rely on local dedup
-  }catch(e){return false}
+  const qs=[];
+  $('loadingMsg').textContent='正在生成高质量题目，请稍候...';
+  $('loadingSub').textContent='从Supabase检索参考题 · 去重检查 · 质量验证';
+  for(let i=0;i<count;i++){
+    updBatch(i,count,'loading');
+    $('loadingMsg').textContent=`正在生成第 ${i+1}/${count} 题...`;
+    const q=await genOne(pid,grade,diff,0,qs);
+    if(q){q._idx=i;q._status='ready';qs.push(q);updBatch(i+1,count,'done')}
+    else{updBatch(i,count,'failed')}
+  }
+  return qs;
 }
 
 // ==================== JSON PARSING ====================
@@ -412,7 +626,15 @@ function extractJSON(t){
   if(!t)return null;
   try{return JSON.parse(t)}catch(e){}
   let m=t.match(/```(?:json)?\s*([\s\S]*?)```/);if(m){try{return JSON.parse(m[1])}catch(e){}}
-  m=t.match(/\{[\s\S]*\}/);if(m){try{return JSON.parse(m[0])}catch(e){}}
+  m=t.match(/\{[\s\S]*\}/);if(m){
+    try{return JSON.parse(m[0])}catch(e){}
+    // Repair common issues
+    let fixed=m[0];
+    try{
+      fixed=fixed.replace(/[\x00-\x1f]/g,' ').replace(/\t/g,' ');
+      return JSON.parse(fixed);
+    }catch(e2){}
+  }
   return null;
 }
 
@@ -463,23 +685,34 @@ function selPoint(pid){curPoint=pid;const pt=findPt(pid);
 function updPtStats(){
   const pt=findPt(curPoint);if(!pt)return;
   const st=getStats()[curPoint]||{total:0,correct:0};
-  const dl=(getDedup()[curPoint]||[]);const c=Date.now()-90*24*3600*1000;
+  const dl=(getDedup()[curPoint]||[]);const c=Date.now()-30*24*3600*1000;
   const rc=dl.filter(e=>e.date>c).length;
-  $('pointStats').innerHTML=`已做 <b>${st.total}</b> 题 | 正确率 <b>${st.total>0?Math.round(100*st.correct/st.total):0}%</b> | 近90天生成 <b>${rc}</b> 道不重复题`;
+  $('pointStats').innerHTML=`已做 <b>${st.total}</b> 题 | 正确率 <b>${st.total>0?Math.round(100*st.correct/st.total):0}%</b> | 近30天生成 <b>${rc}</b> 道不重复题 | 去重库 <b>${totalDedupCount||0}</b> 条`;
 }
 
 // ==================== QUESTION DISPLAY ====================
 function updBatch(d,t,s){if(batchSize>1){$('batchProgress').style.display='';$('batchBar').style.width=(100*d/t)+'%';$('batchLabel').textContent=`${d}/${t}`;
-  let h='';for(let i=0;i<t;i++)h+=`<div style="width:8px;height:8px;border-radius:50%;background:${i<d?'#36D399':'#e5e5e5'}"></div>`;$('batchDots').innerHTML=h}else{$('batchProgress').style.display='none'}}
+  let h='';for(let i=0;i<t;i++)h+=`<div style="width:8px;height:8px;border-radius:50%;background:${i<d?s==='failed'&&i===d-1?'#F43F5E':'#36D399':'#e5e5e5'}"></div>`;$('batchDots').innerHTML=h}else{$('batchProgress').style.display='none'}}
 
 async function startGen(){
   if(!curPoint||isLoading)return;isLoading=true;submitted=false;selectedOpt=null;userFill='';fillIsCorrect=false;
   $('questionCard').style.display='none';$('loadingCard').style.display='';$('questionArea').style.display='';
   $('qResult').style.display='none';$('batchProgress').style.display='none';
+  $('loadingMsg').textContent='正在生成高质量题目，请稍候...';
+  $('loadingSub').textContent='从Supabase检索参考题 · 去重检查 · 质量验证';
   const grade=curGrade||'高三';const pt=findPt(curPoint);const diff=pt?pt.diff:'medium';
-  try{batchQuestions=await genBatch(curPoint,batchSize,grade,diff);
-    if(batchQuestions.length>0){curQ=batchQuestions[0];for(let i=1;i<batchQuestions.length;i++)addDedup(curPoint,batchQuestions[i].question,batchQuestions[i].type);renderQ()}else toast('生成失败，请检查 API 配置')}
-  catch(e){console.error(e);toast('生成出错：'+e.message)}
+  try{
+    batchQuestions=await genBatch(curPoint,batchSize,grade,diff);
+    if(batchQuestions.length>0){
+      curQ=batchQuestions[0];
+      for(let i=1;i<batchQuestions.length;i++)addDedup(curPoint,batchQuestions[i].question,batchQuestions[i].type);
+      renderQ();
+      $('loadingMsg').textContent='正在生成高质量题目，请稍候...';
+      $('loadingSub').textContent='从Supabase检索参考题 · 去重检查 · 质量验证';
+    }else{
+      toast('生成失败，请检查 API 配置或更换模型重试');
+    }
+  }catch(e){console.error(e);toast('生成出错：'+e.message)}
   $('loadingCard').style.display='none';isLoading=false;
 }
 function renderQ(){
@@ -521,17 +754,119 @@ function showHint(){if(!curQ)return;const h=curQ.explanation?curQ.explanation.sp
 
 // ==================== ERROR NOTEBOOK ====================
 function addErr(){if(!curQ)return;const es=getErrors();if(es.some(e=>e.question===curQ.question))return;const pt=findPt(curPoint);
-  es.push({id:Date.now(),chapterId:curChapter,pointId:curPoint,chapterName:getChName(curChapter),pointName:pt?pt.name:'',question:curQ.question,options:curQ.options,answer:curQ.answer,type:curQ.type,explanation:curQ.explanation||'',difficulty:curQ.difficulty||'中',date:new Date().toLocaleDateString('zh-CN')});
+  es.push({id:Date.now(),chapterId:curChapter,pointId:curPoint,chapterName:getChName(curChapter),pointName:pt?pt.name:'',question:curQ.question,options:curQ.options,answer:curQ.answer,type:curQ.type,explanation:curQ.explanation||'',difficulty:curQ.difficulty||'中',userAnswer:selectedOpt!==null?String.fromCharCode(65+selectedOpt):userFill,date:new Date().toLocaleDateString('zh-CN')});
   localStorage.setItem('bjm_errors',JSON.stringify(es));updErrList();}
 function updErrList(){const es=getErrors();const a=$('errorArea');const l=$('errorList');$('errCount').textContent=`共 ${es.length} 道错题`;
   if(!es.length){a.style.display='none';return}a.style.display='';
   l.innerHTML=es.slice(-20).reverse().map((e,i)=>`<div style="padding:12px;background:#f9fafb;border-radius:10px;font-size:13px">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap"><span class="tag tag-warn">${e.difficulty||'中'}</span><span class="tag tag-pri">${e.pointName||e.chapterName||''}</span><span style="font-size:11px;color:#999;margin-left:auto">${e.date}</span><button style="background:none;border:none;color:#F43F5E;cursor:pointer;font-size:11px" onclick="rmErr(${es.length-1-i})">删除</button></div>
-    <div style="line-height:1.6">${e.question.substring(0,150)}...</div>${e.answer?`<div style="color:#36D399;font-weight:500;margin-top:2px">答案：${Array.isArray(e.answer)?e.answer.join(','):e.answer}</div>`:''}</div>`).join('');}
+    <div style="line-height:1.6">${e.question.substring(0,150)}...</div>
+    ${e.userAnswer?`<div style="font-size:12px;color:#F43F5E;margin-top:2px">你的答案：${e.userAnswer}</div>`:''}
+    ${e.answer?`<div style="color:#36D399;font-weight:500;margin-top:2px">正确答案：${Array.isArray(e.answer)?e.answer.join(','):e.answer}</div>`:''}</div>`).join('');}
 function rmErr(i){const es=getErrors();es.splice(i,1);localStorage.setItem('bjm_errors',JSON.stringify(es));updErrList()}
 function clearErrors(){if(confirm('确定清空所有错题？')){localStorage.removeItem('bjm_errors');updErrList();toast('错题本已清空')}}
 function exportErrors(){const es=getErrors();if(!es.length){toast('错题本为空');return}let t='北京高中数学错题本\n'+'='.repeat(40)+'\n\n';es.forEach((e,i)=>{t+=`【${i+1}】${e.pointName||''} | ${e.difficulty||''} | ${e.date}\n题目：${e.question.replace(/\$/g,'')}\n${e.options?'选项：'+e.options.join(' ')+'\n':''}答案：${Array.isArray(e.answer)?e.answer.join(','):e.answer}\n${e.explanation?'解析：'+e.explanation+'\n':''}\n---\n\n`});
   const a=document.createElement('a');const b=new Blob([t],{type:'text/plain;charset=utf-8'});a.href=URL.createObjectURL(b);a.download='北京数学错题本.txt';a.click();URL.revokeObjectURL(a.href);toast('错题本已导出')}
+
+// ==================== PDF EXPORT (html2pdf.js + MathJax) ====================
+async function exportPDF(){
+  const es=getErrors();
+  if(!es.length){toast('错题本为空，无需导出');return}
+
+  // Show loading overlay
+  const overlay=document.createElement('div');
+  overlay.className='pdf-loading-overlay';
+  overlay.innerHTML='<div class="spinner"></div><div class="text">正在渲染公式...</div>';
+  document.body.appendChild(overlay);
+
+  try{
+    // Build export HTML with proper styling for A4 PDF
+    let body='';
+    es.forEach((e,i)=>{
+      const qText=e.question||'';
+      const ans=Array.isArray(e.answer)?e.answer.join(','):(e.answer||'');
+      const exp=e.explanation||'';
+      const diffLabel=e.difficulty==='easy'?'基础':(e.difficulty==='medium'?'中档':'难题');
+      const userAns=e.userAnswer||'未作答';
+
+      body+=`<div style="border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:16px;page-break-inside:avoid;background:#fff">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-bottom:1px solid #eee;padding-bottom:8px">
+          <span style="font-weight:700;color:#165DFF;font-size:14px">${i+1}. ${e.pointName||e.chapterName||''}</span>
+          <span style="font-size:11px;color:#999">${diffLabel} | ${e.date||''} | ${e.type||''}</span>
+        </div>
+        <div style="font-size:14px;line-height:1.9;margin-bottom:8px;color:#333">${qText}</div>
+        ${e.options?`<div style="font-size:13px;color:#666;margin-bottom:6px;padding:8px;background:#f9fafb;border-radius:6px">${Array.isArray(e.options)?e.options.join('<br>') :e.options}</div>`:''}
+        <div style="font-size:13px;color:#F43F5E;margin-bottom:3px"><b>你的作答：</b>${userAns}</div>
+        <div style="font-size:13px;color:#36D399;margin-bottom:3px"><b>正确答案：</b>${ans}</div>
+        ${exp?`<div style="font-size:12px;color:#666;line-height:1.8;margin-top:6px;padding:10px;background:#f0fdf6;border-radius:6px"><b>解析：</b><br>${exp}</div>`:''}
+      </div>`;
+      // Page break every 2 questions for readability
+      if((i+1)%2===0&&i<es.length-1)body+=`<div style="page-break-after:always"></div>`;
+    });
+
+    const now=new Date();
+    const dateStr=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+
+    const exportHTML=`<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8">
+<style>
+  @page{size:A4;margin:18mm}
+  body{font-family:'Microsoft YaHei','PingFang SC',sans-serif;color:#333;line-height:1.6;font-size:13px}
+  .header{text-align:center;border-bottom:2px solid #165DFF;padding-bottom:12px;margin-bottom:24px}
+  .header h1{font-size:20px;color:#165DFF;margin:0}.header p{font-size:11px;color:#999;margin:4px 0 0}
+  @media print{.header{position:running(header)}}
+</style></head>
+<body>
+  <div class="header"><h1>北京高中数学错题本</h1><p>导出日期：${now.toLocaleDateString('zh-CN')} | 共 ${es.length} 道错题 | 年级：${curGrade||'高三'}</p></div>
+  ${body}
+</body></html>`;
+
+    // Create hidden container for MathJax rendering + html2pdf
+    const container=document.createElement('div');
+    container.style.cssText='position:fixed;left:-9999px;top:0;width:800px;background:#fff;z-index:-1';
+    container.innerHTML=exportHTML;
+    document.body.appendChild(container);
+
+    // Render MathJax in the container
+    overlay.querySelector('.text').textContent='正在渲染数学公式...';
+    if(window.MathJax&&MathJax.typesetPromise){
+      await MathJax.typesetPromise([container]).catch(()=>{});
+      // Wait a bit more for full rendering
+      await new Promise(r=>setTimeout(r,800));
+    }
+
+    // Use html2pdf.js
+    overlay.querySelector('.text').textContent='正在生成PDF文件...';
+    if(window.html2pdf){
+      await html2pdf().set({
+        margin:[18,18,18,18],
+        filename:`数学错题本_${dateStr}.pdf`,
+        image:{type:'jpeg',quality:0.98},
+        html2canvas:{scale:2,useCORS:true,letterRendering:true,logging:false},
+        jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+        pagebreak:{mode:['avoid-all','css','legacy']}
+      }).from(container).save();
+      toast(`PDF已导出：共${es.length}道错题`);
+    }else{
+      // Fallback: download as HTML
+      const blob=new Blob([exportHTML],{type:'text/html;charset=utf-8'});
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=`数学错题本_${dateStr}.html`;
+      a.click();URL.revokeObjectURL(a.href);
+      toast('html2pdf未加载，已导出HTML格式（可用浏览器打开后打印为PDF）');
+    }
+
+    // Cleanup
+    document.body.removeChild(container);
+  }catch(e){
+    console.error('PDF export error:',e);
+    toast('PDF导出失败：'+e.message);
+  }finally{
+    document.body.removeChild(overlay);
+  }
+}
 
 // ==================== STATS & DARK ====================
 function updStats(){const s=getStats();let t=0,c=0;for(const k in s){t+=s[k].total||0;c+=s[k].correct||0}$('statTotal').textContent=t;$('statCorrect').textContent=c;$('statWrong').textContent=t-c;$('statRate').textContent=t>0?Math.round(100*c/t)+'%':'0%';$('badgeCount').textContent=t+'题'}
@@ -548,6 +883,8 @@ function switchMode(){speedMode=!speedMode;$('btnMode').textContent=speedMode?'�
 // ==================== INIT ====================
 function init(){
   initSB();try{tplUsed=JSON.parse(localStorage.getItem('bjm_tpl_used')||'{}')}catch(e){tplUsed={}}dedupHistory=getDedup();
+  // Count total dedup records
+  totalDedupCount=0;for(const k in dedupHistory)totalDedupCount+=dedupHistory[k].length;
   if(localStorage.getItem('bjm_dark')==='1'){darkMode=false;toggleDark()}
   renderOnboarding();renderChFilter();updStats();updErrList();
   const sg=localStorage.getItem('bjm_grade');const so=localStorage.getItem('bjm_goal');const sp=localStorage.getItem('bjm_point');
